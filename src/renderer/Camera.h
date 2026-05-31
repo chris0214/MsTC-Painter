@@ -38,11 +38,21 @@ public:
 
     // ── Setup ──────────────────────────────────────────────────
     void setViewport(int w, int h);
-    void setTarget(DirectX::XMFLOAT3 t)   { m_target = t; }
+    void setTarget(DirectX::XMFLOAT3 t)   { m_target = t; if (!m_pivotLocked) m_orbitPivot = t; }
     void setDistance(float d)             { m_distance = d; }
     void setYaw(float y)                  { m_yaw = y; }
     void setPitch(float p)                { m_pitch = p; }
     void resetToFit(DirectX::XMFLOAT3 center, float radius);
+
+    // ── Pivot lock ─────────────────────────────────────────────
+    /// When ON: orbit always rotates around `orbitPivot()` (the locked point)
+    /// instead of the camera's lookAt. Pan can still slide the view, but the
+    /// orbit pivot stays put — so subsequent rotations come back around the
+    /// same spot you locked. When OFF (default), orbit pivot follows lookAt
+    /// (original behavior).
+    void setPivotLocked(bool on);
+    bool pivotLocked() const              { return m_pivotLocked; }
+    DirectX::XMFLOAT3 orbitPivot() const  { return m_orbitPivot; }
 
     // ── Matrices ───────────────────────────────────────────────
     DirectX::XMMATRIX view()       const;
@@ -56,7 +66,9 @@ public:
     float             distance()    const { return m_distance; }
 
 private:
-    DirectX::XMFLOAT3 m_target { 0, 10, 0 };
+    DirectX::XMFLOAT3 m_target { 0, 10, 0 };       // camera lookAt
+    DirectX::XMFLOAT3 m_orbitPivot { 0, 10, 0 };   // orbit center (== target when unlocked)
+    bool  m_pivotLocked = false;
     float m_yaw       = 0.0f;        // radians
     float m_pitch     = 0.2f;        // radians
     float m_distance  = 30.0f;

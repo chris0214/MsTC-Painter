@@ -104,7 +104,7 @@ public:
     /// orbit pivot to the hit point INSTEAD of starting a paint stroke. After
     /// one click the mode disarms automatically. Equivalent to pressing F
     /// at the cursor position; provided as a discoverable toolbar button.
-    void armSetPivotMode() { m_setPivotArmed = true; }
+    void armSetPivotMode();
     bool isSetPivotArmed() const { return m_setPivotArmed; }
 
 signals:

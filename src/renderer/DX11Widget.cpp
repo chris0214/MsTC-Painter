@@ -561,7 +561,11 @@ void DX11Widget::render()
             std::max(1.0f, static_cast<float>(height()) * dprP)
         };
         if (m_showPivotMarker && m_mesh && m_mesh->isReady()) {
-            cb.pivotWorldPos = m_camera.target();
+            // Marker tracks the ORBIT pivot, not the camera lookAt. When the
+            // user has the pivot locked and pans, the lookAt drifts but the
+            // marker stays put on the locked spot — exactly the visual
+            // feedback they want.
+            cb.pivotWorldPos = m_camera.orbitPivot();
             cb.pivotRadiusPx = 6.0f * dprP;   // 6 logical px, scaled for HiDPI
             cb.pivotVisible  = 1u;
         } else {
@@ -683,6 +687,7 @@ void DX11Widget::mousePressEvent(QMouseEvent* ev)
         }
         m_setPivotArmed = false;
         emit setPivotModeChanged(false);
+        unsetCursor();
         m_drag = DragMode::None;
         return;
     }
@@ -777,11 +782,12 @@ void DX11Widget::mouseMoveEvent(QMouseEvent* ev)
     }
     if (m_drag == DragMode::Pan) {
         m_camera.pan(dx * speed, dy * speed);
-        // Pan in 3D space can drift the pivot off the mesh surface. After
-        // each pan delta, raycast through the pivot's new projected screen
-        // position and snap to whatever surface is there. Keeps the pivot
-        // anchored to mesh so the next orbit feels predictable.
-        snapPivotToSurface();
+        // Pan is a free translate — we deliberately do NOT auto-snap the
+        // pivot to surface here. Earlier versions did, but once the pivot
+        // drifted into empty space the projected screen position landed
+        // on background and snap silently failed forever. Blender's
+        // convention is the right one: pan freely, and let the user
+        // explicitly snap with F when they want a new pivot.
         return;
     }
     if (m_drag == DragMode::None) {
@@ -908,6 +914,15 @@ void DX11Widget::leaveEvent(QEvent*)
 // Pivot surface snap + UV→world scale
 // ─────────────────────────────────────────────────────────────────
 
+void DX11Widget::armSetPivotMode()
+{
+    m_setPivotArmed = true;
+    // Crosshair cursor makes it visually obvious that the next click does
+    // NOT paint — it places the orbit pivot. Cleared in the click handler
+    // (or when the user cancels via Esc).
+    setCursor(Qt::CrossCursor);
+}
+
 float DX11Widget::uvToWorldScale(int triangleIndex) const
 {
     using namespace DirectX;
@@ -986,6 +1001,16 @@ void DX11Widget::snapPivotToSurface()
 void DX11Widget::keyPressEvent(QKeyEvent* ev)
 {
     using namespace DirectX;
+
+    // Esc cancels Set-Pivot mode if armed. Always check this first so the
+    // user has a quick escape hatch; doesn't interfere with anything else
+    // since Esc isn't otherwise bound here.
+    if (ev->key() == Qt::Key_Escape && m_setPivotArmed) {
+        m_setPivotArmed = false;
+        unsetCursor();
+        emit setPivotModeChanged(false);
+        return;
+    }
 
     const bool ctrl = (ev->modifiers() & Qt::ControlModifier) != 0;
 

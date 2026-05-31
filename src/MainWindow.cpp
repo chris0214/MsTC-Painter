@@ -446,6 +446,32 @@ void MainWindow::setupUI()
         });
         hl->addWidget(pivotShowCheck);
 
+        // Lock Pivot — when ON, pan slides the view but the orbit pivot
+        // stays put. Subsequent orbits come back around the locked spot.
+        // Useful for "I want to inspect this exact spot from many angles
+        // while panning around to see neighbors". Persisted in QSettings.
+        auto* pivotLockCheck = new QCheckBox(tr("Lock Pivot"), viewBar);
+        pivotLockCheck->setToolTip(
+            tr("Lock the orbit pivot to the current spot.\n"
+               "When ON: pan slides the view, but rotation always returns "
+               "to spinning around the locked point.\n"
+               "Pressing F or using Set Pivot relocates the locked point."));
+        {
+            QSettings s2("msTC", "TextureStudio");
+            const bool locked = s2.value("pivotLocked", false).toBool();
+            pivotLockCheck->setChecked(locked);
+            if (m_viewport) m_viewport->camera().setPivotLocked(locked);
+        }
+        connect(pivotLockCheck, &QCheckBox::toggled, this, [this](bool on) {
+            if (m_viewport) {
+                m_viewport->camera().setPivotLocked(on);
+                m_viewport->update();
+            }
+            QSettings s2("msTC", "TextureStudio");
+            s2.setValue("pivotLocked", on);
+        });
+        hl->addWidget(pivotLockCheck);
+
         // Stash for post-construction wire-up of the disarm signal.
         m_setPivotBtn = setPivotBtn;
 

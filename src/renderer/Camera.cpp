@@ -17,20 +17,62 @@ void OrbitCamera::orbit(float dxPixels, float dyPixels)
     // 0.01 rad/px (~0.57°/px) was almost twice that and made the camera
     // feel jumpy — small wrist movements would spin past the target.
     constexpr float k = 0.005f;
-
-    // Direction convention: "drag the model" — the cursor grabs the model
-    // and rotates it under the camera, so dragging right rotates the model
-    // clockwise (as seen from above), which is the same as the camera
-    // moving counter-clockwise. Same for vertical: dragging down tilts the
-    // model so the user sees its top, which is the same as the camera
-    // pitching up. Both directions matched up to user expectation when we
-    // flipped these signs.
-    m_yaw   += dxPixels * k;
-    m_pitch += dyPixels * k;
-
-    // Clamp pitch to avoid gimbal flip
     constexpr float PITCH_LIMIT = XM_PIDIV2 - 0.01f;
-    m_pitch = std::clamp(m_pitch, -PITCH_LIMIT, PITCH_LIMIT);
+
+    if (!m_pivotLocked) {
+        // Standard orbit around m_target. Keep orbitPivot in sync so a
+        // future "lock" snapshot sees the right anchor.
+        m_yaw   += dxPixels * k;
+        m_pitch += dyPixels * k;
+        m_pitch  = std::clamp(m_pitch, -PITCH_LIMIT, PITCH_LIMIT);
+        m_orbitPivot = m_target;
+        return;
+    }
+
+    // ── Locked orbit ───────────────────────────────────────────
+    // Rotate eye AND lookAt rigidly around m_orbitPivot. After the rotation,
+    // re-derive yaw/pitch/distance from the new (eye → lookAt) so the
+    // existing eyePosition() formula still produces the post-rotation eye.
+    XMFLOAT3 eyeF = eyePosition();
+    XMVECTOR vEye = XMLoadFloat3(&eyeF);
+    XMVECTOR vTgt = XMLoadFloat3(&m_target);
+    XMVECTOR vPiv = XMLoadFloat3(&m_orbitPivot);
+
+    XMVECTOR fwd  = XMVectorSubtract(vTgt, vEye);
+    if (XMVectorGetX(XMVector3LengthSq(fwd)) < 1e-10f) return;
+    fwd = XMVector3Normalize(fwd);
+
+    XMVECTOR upW   = XMVectorSet(0, 1, 0, 0);
+    XMVECTOR right = XMVector3Cross(upW, fwd);
+    if (XMVectorGetX(XMVector3LengthSq(right)) < 1e-6f) return;   // gimbal
+    right = XMVector3Normalize(right);
+
+    // Yaw around world Y, then pitch around the camera's right axis.
+    // Same axes the unlocked-orbit parameterization uses, just applied to
+    // (eye-pivot) and (target-pivot) instead of just (eye-target).
+    const XMMATRIX Ryaw   = XMMatrixRotationY(dxPixels * k);
+    const XMMATRIX Rpitch = XMMatrixRotationAxis(right, dyPixels * k);
+    const XMMATRIX R      = XMMatrixMultiply(Ryaw, Rpitch);
+
+    const XMVECTOR offEye = XMVectorSubtract(vEye, vPiv);
+    const XMVECTOR offTgt = XMVectorSubtract(vTgt, vPiv);
+    const XMVECTOR newEye = XMVectorAdd(vPiv, XMVector3TransformNormal(offEye, R));
+    const XMVECTOR newTgt = XMVectorAdd(vPiv, XMVector3TransformNormal(offTgt, R));
+
+    XMStoreFloat3(&m_target, newTgt);
+
+    // Re-derive yaw / pitch / distance so eyePosition() returns newEye.
+    const XMVECTOR dirVec = XMVectorSubtract(newEye, newTgt);
+    const float dist = XMVectorGetX(XMVector3Length(dirVec));
+    if (dist > 1e-5f) {
+        m_distance = dist;
+        XMFLOAT3 dirF;
+        XMStoreFloat3(&dirF, XMVectorScale(dirVec, 1.0f / dist));
+        // dir = (sin(yaw)cos(pitch), sin(pitch), cos(yaw)cos(pitch))
+        m_pitch = std::asin(std::clamp(dirF.y, -1.0f, 1.0f));
+        m_yaw   = std::atan2(dirF.x, dirF.z);
+        m_pitch = std::clamp(m_pitch, -PITCH_LIMIT, PITCH_LIMIT);
+    }
 }
 
 void OrbitCamera::pan(float dxPixels, float dyPixels)
@@ -59,6 +101,13 @@ void OrbitCamera::pan(float dxPixels, float dyPixels)
     );
 
     XMStoreFloat3(&m_target, XMVectorAdd(vTgt, delta));
+    if (!m_pivotLocked) {
+        // Unlocked: orbit pivot tracks lookAt.
+        m_orbitPivot = m_target;
+    }
+    // Locked: m_orbitPivot stays where the user locked it. Pan slides the
+    // view but the orbit anchor is preserved, so the next orbit comes
+    // back around the locked spot.
 }
 
 void OrbitCamera::zoom(float wheelDelta)
@@ -81,9 +130,11 @@ void OrbitCamera::setViewport(int w, int h)
 
 void OrbitCamera::resetToFit(XMFLOAT3 center, float radius)
 {
-    m_target   = center;
-    m_yaw      = 0.0f;
-    m_pitch    = 0.15f;
+    m_target     = center;
+    m_orbitPivot = center;
+    m_pivotLocked = false;   // full reset releases the lock too
+    m_yaw        = 0.0f;
+    m_pitch      = 0.15f;
     // Pull camera back so the bounding sphere fully fits in vertical FOV
     m_distance = std::max(radius / std::tan(m_fovY * 0.5f), 1.0f) * 1.2f;
 
@@ -157,8 +208,25 @@ void OrbitCamera::setStandardView(StandardView v)
 
 void OrbitCamera::focusOn(XMFLOAT3 worldPos)
 {
-    m_target = worldPos;
-    // Don't change distance — preserves the user's current zoom level. Just
-    // re-center the orbit pivot so subsequent rotations spin around the new
-    // point of interest.
+    // Move both the lookAt and the orbit pivot to the new world position.
+    // Don't touch m_distance — preserves the user's current zoom level.
+    // Lock state is preserved: focusing while locked just relocates the
+    // locked pivot to a new spot (still locked there).
+    m_target     = worldPos;
+    m_orbitPivot = worldPos;
+}
+
+void OrbitCamera::setPivotLocked(bool on)
+{
+    if (m_pivotLocked == on) return;
+    m_pivotLocked = on;
+    if (on) {
+        // Snapshot the current lookAt as the locked orbit center. Subsequent
+        // pans drift m_target but m_orbitPivot stays here.
+        m_orbitPivot = m_target;
+    } else {
+        // Releasing the lock — re-sync the pivot to the (possibly panned)
+        // lookAt so the next orbit feels natural (around what you see).
+        m_orbitPivot = m_target;
+    }
 }
