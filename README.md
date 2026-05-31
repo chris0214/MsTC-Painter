@@ -1,7 +1,7 @@
 # msTC Texture Studio
 
 使用了Claude Opus 4.7 进行编写。
-为 [msToonCoordinator](https://bowlroll.net/) MMD 后期效果设计的非破坏性贴图绘制工具。
+为 msToonCoordinator 设计的非破坏性贴图绘制工具。
 A non-destructive texture painting tool for the **msToonCoordinator** MMD post-effect.
 
 [English](#english) · [简体中文](#中文)
