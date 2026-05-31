@@ -1,0 +1,11 @@
+{
+  "name": "mstc-texture-studio",
+  "version-string": "0.1.0",
+  "builtin-baseline": "495848814af4cc2760e70f7440c2dbe66d3ff196",
+  "dependencies": [
+    "fmt",
+    "spdlog",
+    "nlohmann-json",
+    "stb"
+  ]
+}
